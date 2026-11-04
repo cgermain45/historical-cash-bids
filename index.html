@@ -101,7 +101,6 @@ td.cash{font-weight:600}
 const API = 'https://ondemand.websol.barchart.com';
 const KEY_STORE = 'bc_hist_bids_apikey';
 const PREF_STORE = 'bc_hist_bids_prefs';
-const MAXREC = 1000;
 const CONCURRENCY = 6;
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const FUT_CODES = {F:0,G:1,H:2,J:3,K:4,M:5,N:6,Q:7,U:8,V:9,X:10,Z:11};
@@ -164,7 +163,13 @@ async function api(endpoint, params){
   const qs = new URLSearchParams({apikey: apiKey, ...params});
   const res = await fetch(`${API}/${endpoint}.json?${qs}`);
   if (res.status === 401 || res.status === 403) throw new Error('The API key was rejected. Check it and try again.');
-  if (!res.ok) throw new Error(`${endpoint} returned HTTP ${res.status}.`);
+  if (!res.ok){
+    let detail = '';
+    try { const b = await res.json(); detail = (b && b.status && b.status.message) || ''; } catch(e){}
+    const err = new Error(`${endpoint} returned HTTP ${res.status}${detail ? ': ' + detail : ''}.`);
+    err.httpStatus = res.status;
+    throw err;
+  }
   const data = await res.json();
   const code = data && data.status && data.status.code;
   if (code === 204) return [];
@@ -176,14 +181,21 @@ async function getInstruments(locId, root){
   const key = locId + '|' + root;
   if (instCache.has(key)) return instCache.get(key);
   const out = [];
-  for (let page = 1; page <= 20; page++){
-    const rows = await api('getGrainInstruments', {
-      instrumentType:'bidCash', instrumentRoot:root, locationId:locId, maxRecords:MAXREC, page
-    });
-    // Stop if the API ignored the page parameter and repeated page 1.
-    if (page > 1 && rows.length && out.some(r => r.symbol === rows[0].symbol)) break;
+  // Same parameters as the call that worked by hand: pageNumber, no maxRecords.
+  // Page size is unknown, so keep paging until a page is empty, repeats, or errors.
+  for (let pageNumber = 1; pageNumber <= 20; pageNumber++){
+    let rows;
+    try {
+      rows = await api('getGrainInstruments', {
+        instrumentType:'bidCash', instrumentRoot:root, locationId:locId, pageNumber
+      });
+    } catch (e){
+      if (pageNumber > 1) break;      // past the last page
+      throw e;
+    }
+    if (!rows.length) break;
+    if (out.some(r => r.symbol === rows[0].symbol)) break;   // page ignored, repeated
     out.push(...rows);
-    if (rows.length < MAXREC) break;
   }
   instCache.set(key, out);
   return out;
