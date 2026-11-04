@@ -149,10 +149,7 @@ function compact(ymd){ return ymd.replace(/-/g,''); }
 function prettyDate(ymd){ const d=new Date(ymd+'T12:00:00'); return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}); }
 function isWeekend(ymd){ const g=new Date(ymd+'T12:00:00').getDay(); return g===0||g===6; }
 function monYY(iso){ const y=iso.slice(2,4), m=+iso.slice(5,7)-1; return `${MONTHS[m]} ${y}`; }
-function deliveryLabel(start, end){
-  const a = monYY(start), b = monYY(end);
-  return a===b ? a : `${a} – ${b}`;
-}
+function usDate(ymd){ if(!ymd) return ''; const [y,m,d]=ymd.split('-'); return `${+m}/${+d}/${y}`; }
 function futLabel(sym){
   const m = /^[A-Z]{2}([FGHJKMNQUVXZ])(\d{2})$/.exec(sym||'');
   return m ? `${MONTHS[FUT_CODES[m[1]]]} ${m[2]}` : (sym||'');
@@ -312,8 +309,8 @@ async function run(){
         elevator: a.inst.elevator || '',
         location: [a.inst.location, a.inst.state].filter(Boolean).join(', '),
         commodity: a.inst.commodity || a.root,
-        delivery: deliveryLabel(a.start, a.end),
         start: a.start,
+        end: a.end,
         futMonth: futLabel(a.inst.underlyingFuture),
         futures: fut,
         basis: basisToCents(a.rawBasis ?? null, a.cash, fut),
@@ -359,16 +356,16 @@ function render(rows, ymd, locs, locInfo, notes){
   }
 
   html += `<div class="tablebox"><table><thead><tr>
-    <th>Commodity</th><th>Delivery</th><th>Futures month</th>
+    <th>Commodity</th><th>Delivery start</th><th>Delivery end</th><th>Futures month</th>
     <th class="num">Futures</th><th class="num">Basis (¢)</th><th class="num">Cash price</th></tr></thead><tbody>`;
   let cur = null;
   rows.forEach(r => {
     if (r.locId !== cur){
       cur = r.locId;
       const info = locInfo[r.locId] || {};
-      html += `<tr class="group"><td colspan="6">${esc(info.elevator || 'Location')}<span>${esc([info.location, info.state].filter(Boolean).join(', '))} · ID ${esc(r.locId)}</span></td></tr>`;
+      html += `<tr class="group"><td colspan="7">${esc(info.elevator || 'Location')}<span>${esc([info.location, info.state].filter(Boolean).join(', '))} · ID ${esc(r.locId)}</span></td></tr>`;
     }
-    html += `<tr title="${esc(r.symbol)}"><td>${esc(r.commodity)}</td><td>${esc(r.delivery)}</td><td>${esc(r.futMonth)}</td>
+    html += `<tr title="${esc(r.symbol)}"><td>${esc(r.commodity)}</td><td>${esc(usDate(r.start))}</td><td>${esc(usDate(r.end))}</td><td>${esc(r.futMonth)}</td>
       <td class="num">${fmt(r.futures, 4)}</td>
       <td class="num${r.basis!=null && r.basis<0?' neg':''}">${r.basis==null?'—':(r.basis>0?'+':'')+r.basis.toFixed(2)}</td>
       <td class="num cash">${fmt(r.cash, 4)}</td></tr>`;
@@ -380,8 +377,8 @@ function render(rows, ymd, locs, locInfo, notes){
 }
 
 function tableData(){
-  const head = ['Date','Location ID','Elevator','Location','Commodity','Delivery','Futures Month','Futures','Basis (cents)','Cash Price','Symbol'];
-  const body = lastRows.map(r => [lastMeta.ymd, Number(r.locId), r.elevator, r.location, r.commodity, r.delivery, r.futMonth,
+  const head = ['Date','Location ID','Elevator','Location','Commodity','Delivery Start','Delivery End','Futures Month','Futures','Basis (cents)','Cash Price','Symbol'];
+  const body = lastRows.map(r => [lastMeta.ymd, Number(r.locId), r.elevator, r.location, r.commodity, r.start, r.end, r.futMonth,
     r.futures, r.basis, r.cash, r.symbol]);
   return [head, ...body];
 }
@@ -398,8 +395,11 @@ function exportCSV(){
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 function exportXLSX(){
-  const ws = XLSX.utils.aoa_to_sheet(tableData());
-  ws['!cols'] = [12,11,26,20,18,14,13,10,12,11,26].map(w => ({wch:w}));
+  // Real Excel dates (Date, Delivery Start, Delivery End) so they sort and filter properly.
+  const toDate = v => { if (!v) return null; const [y,m,d] = v.split('-').map(Number); return new Date(Date.UTC(y, m-1, d)); };
+  const data = tableData().map((row, i) => i === 0 ? row : row.map((v, c) => [0,5,6].includes(c) ? toDate(v) : v));
+  const ws = XLSX.utils.aoa_to_sheet(data, {cellDates:true, dateNF:'m/d/yyyy', UTC:true});
+  ws['!cols'] = [12,11,26,20,18,14,14,13,10,12,11,26].map(w => ({wch:w}));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Bids ' + lastMeta.ymd);
   XLSX.writeFile(wb, fileBase() + '.xlsx');
