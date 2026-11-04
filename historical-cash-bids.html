@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Historical Cash Bids</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  color-scheme: light;
+  --bg:#EEF1EF; --panel:#FFFFFF; --ink:#1C2622; --muted:#5D6B65; --line:#D3DAD6;
+  --steel:#3E5A63; --grain:#D9A62E; --grain-ink:#2A1F05; --warn:#9A4A1C; --row:#F6F8F7;
+  --font:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --cond:"IBM Plex Sans Condensed", "Arial Narrow", var(--font);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    color-scheme: dark;
+    --bg:#141A18; --panel:#1C2421; --ink:#E4EAE7; --muted:#9AA8A2; --line:#2F3B37;
+    --steel:#86A9B3; --grain:#E3B847; --grain-ink:#1E1604; --warn:#E39A6C; --row:#202A27;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--font);}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px}
+h1{font:600 26px/1.2 var(--cond);margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 22px}
+.controls{background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--grain);border-radius:6px;padding:18px 20px;display:grid;gap:16px 20px;grid-template-columns:2fr 1fr 1.4fr auto;align-items:end}
+.controls .key{grid-column:1 / -1;display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:end;padding-bottom:14px;border-bottom:1px dashed var(--line)}
+label{display:block;font-weight:500;font-size:13px;margin-bottom:5px}
+.hint{font-size:12px;color:var(--muted);margin-top:4px}
+input[type=text],input[type=password],input[type=date]{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px 10px}
+input:focus-visible,button:focus-visible{outline:2px solid var(--steel);outline-offset:2px}
+.check{display:flex;gap:6px;align-items:center;font-size:13px;white-space:nowrap;padding-bottom:9px}
+button{font:600 14px var(--font);border-radius:4px;padding:9px 16px;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+button.go{background:var(--grain);color:var(--grain-ink);border-color:var(--grain);padding:9px 26px;font-size:15px}
+button:disabled{opacity:.55;cursor:default}
+.status{margin:18px 0 8px;min-height:22px;color:var(--muted);font-size:14px}
+.status.err{color:var(--warn)}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0}
+.summary{font-family:var(--cond);font-size:18px;font-weight:500}
+.exports{display:flex;gap:8px}
+.notes{font-size:13px;color:var(--warn);margin:4px 0 10px}
+.tablebox{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:14px}
+th{position:sticky;top:0;background:var(--panel);text-align:left;font:600 12.5px var(--cond);color:var(--muted);padding:10px 12px;border-bottom:2px solid var(--line);white-space:nowrap}
+td{padding:7px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+td.num,th.num{text-align:right}
+tr.group td{background:var(--row);font-weight:600;color:var(--steel);border-bottom:1px solid var(--line);padding-top:12px}
+tr.group td span{font-weight:400;color:var(--muted);margin-left:8px}
+td.cash{font-weight:600}
+.neg{color:var(--warn)}
+.empty{padding:40px 20px;text-align:center;color:var(--muted)}
+@media (max-width:820px){
+  .controls{grid-template-columns:1fr}
+  .controls .key{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Historical cash bids</h1>
+  <p class="sub">End-of-day bids for one or more locations on a past date.</p>
+
+  <div class="controls">
+    <div class="key">
+      <div>
+        <label for="apikey">OnDemand API key</label>
+        <input type="password" id="apikey" autocomplete="off" spellcheck="false">
+      </div>
+      <label class="check"><input type="checkbox" id="remember"> Remember on this computer</label>
+      <button type="button" id="forget">Forget key</button>
+    </div>
+    <div>
+      <label for="locs">Location IDs</label>
+      <input type="text" id="locs" placeholder="87738, 80767">
+      <div class="hint">Separate with commas or spaces.</div>
+    </div>
+    <div>
+      <label for="date">Date</label>
+      <input type="date" id="date">
+      <div class="hint" id="datehint">Trading days only.</div>
+    </div>
+    <div>
+      <label for="roots">Commodity roots</label>
+      <input type="text" id="roots" value="ZC, ZS, ZW, KE, MW">
+      <div class="hint">ZC corn, ZS soybeans, ZW/KE/MW wheat.</div>
+    </div>
+    <button type="button" class="go" id="go">Go</button>
+  </div>
+
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+  <div id="results"></div>
+</div>
+
+<script>
+const API = 'https://ondemand.websol.barchart.com';
+const KEY_STORE = 'bc_hist_bids_apikey';
+const PREF_STORE = 'bc_hist_bids_prefs';
+const MAXREC = 1000;
+const CONCURRENCY = 6;
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const FUT_CODES = {F:0,G:1,H:2,J:3,K:4,M:5,N:6,Q:7,U:8,V:9,X:10,Z:11};
+const $ = id => document.getElementById(id);
+
+let apiKey = '';
+let lastRows = [];
+let lastMeta = null;
+const histCache = new Map();
+const instCache = new Map();
+
+/* ---------- key + prefs storage ---------- */
+function readStore(store, k){ try { return store.getItem(k); } catch(e){ return null; } }
+function initKey(){
+  const saved = readStore(localStorage, KEY_STORE);
+  const session = readStore(sessionStorage, KEY_STORE);
+  if (saved){ $('apikey').value = saved; $('remember').checked = true; }
+  else if (session){ $('apikey').value = session; }
+}
+function storeKey(k){
+  try {
+    localStorage.removeItem(KEY_STORE); sessionStorage.removeItem(KEY_STORE);
+    ($('remember').checked ? localStorage : sessionStorage).setItem(KEY_STORE, k);
+  } catch(e){}
+}
+$('forget').onclick = () => {
+  try { localStorage.removeItem(KEY_STORE); sessionStorage.removeItem(KEY_STORE); } catch(e){}
+  $('apikey').value = ''; $('remember').checked = false;
+  setStatus('API key removed from this browser.');
+};
+function initPrefs(){
+  try {
+    const p = JSON.parse(localStorage.getItem(PREF_STORE) || '{}');
+    if (p.locs) $('locs').value = p.locs;
+    if (p.roots) $('roots').value = p.roots;
+  } catch(e){}
+}
+function savePrefs(){
+  try { localStorage.setItem(PREF_STORE, JSON.stringify({locs:$('locs').value, roots:$('roots').value})); } catch(e){}
+}
+
+/* ---------- date helpers ---------- */
+function todayYMD(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function addDays(ymd, n){ const d=new Date(ymd+'T12:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function compact(ymd){ return ymd.replace(/-/g,''); }
+function prettyDate(ymd){ const d=new Date(ymd+'T12:00:00'); return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}); }
+function isWeekend(ymd){ const g=new Date(ymd+'T12:00:00').getDay(); return g===0||g===6; }
+function monYY(iso){ const y=iso.slice(2,4), m=+iso.slice(5,7)-1; return `${MONTHS[m]} ${y}`; }
+function deliveryLabel(start, end){
+  const a = monYY(start), b = monYY(end);
+  return a===b ? a : `${a} – ${b}`;
+}
+function futLabel(sym){
+  const m = /^[A-Z]{2}([FGHJKMNQUVXZ])(\d{2})$/.exec(sym||'');
+  return m ? `${MONTHS[FUT_CODES[m[1]]]} ${m[2]}` : (sym||'');
+}
+
+/* ---------- API ---------- */
+async function api(endpoint, params){
+  const qs = new URLSearchParams({apikey: apiKey, ...params});
+  const res = await fetch(`${API}/${endpoint}.json?${qs}`);
+  if (res.status === 401 || res.status === 403) throw new Error('The API key was rejected. Check it and try again.');
+  if (!res.ok) throw new Error(`${endpoint} returned HTTP ${res.status}.`);
+  const data = await res.json();
+  const code = data && data.status && data.status.code;
+  if (code === 204) return [];
+  if (code && code !== 200) throw new Error(`${endpoint}: ${data.status.message || 'error ' + code}`);
+  return Array.isArray(data.results) ? data.results : [];
+}
+
+async function getInstruments(locId, root){
+  const key = locId + '|' + root;
+  if (instCache.has(key)) return instCache.get(key);
+  const out = [];
+  for (let page = 1; page <= 20; page++){
+    const rows = await api('getGrainInstruments', {
+      instrumentType:'bidCash', instrumentRoot:root, locationId:locId, maxRecords:MAXREC, page
+    });
+    // Stop if the API ignored the page parameter and repeated page 1.
+    if (page > 1 && rows.length && out.some(r => r.symbol === rows[0].symbol)) break;
+    out.push(...rows);
+    if (rows.length < MAXREC) break;
+  }
+  instCache.set(key, out);
+  return out;
+}
+
+function closeOn(symbol, ymd){
+  const key = symbol + '|' + ymd;
+  if (histCache.has(key)) return histCache.get(key);
+  const p = api('getHistory', {symbol, type:'daily', startDate:compact(ymd), endDate:compact(addDays(ymd,1))})
+    .then(rows => {
+      const r = rows.find(x => String(x.tradingDay || x.timestamp || '').slice(0,10) === ymd);
+      return r && r.close != null ? Number(r.close) : null;
+    })
+    .catch(err => { histCache.delete(key); throw err; });
+  histCache.set(key, p);
+  return p;
+}
+
+async function pool(items, n, fn, onTick){
+  let next = 0, done = 0;
+  const results = new Array(items.length);
+  async function worker(){
+    while (next < items.length){
+      const i = next++;
+      try { results[i] = await fn(items[i]); } catch(e){ results[i] = {error:e}; }
+      done++; onTick && onTick(done, items.length);
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(n, items.length)}, worker));
+  return results;
+}
+
+/* ---------- units ---------- */
+// Grain futures come back in cents (e.g. 444.25) or dollars (4.4425); normalise to dollars.
+function futToDollars(v){ return v == null ? null : (Math.abs(v) >= 50 ? v/100 : v); }
+// Basis symbol units are unconfirmed; pick the reading (cents or dollars) that agrees with cash − futures.
+function basisToCents(raw, cash, fut){
+  if (raw == null) return (cash != null && fut != null) ? Math.round((cash - fut) * 10000) / 100 : null;
+  if (fut == null || cash == null) return Math.abs(raw) < 5 ? raw * 100 : raw;
+  const calc = (cash - fut) * 100;
+  return Math.abs(raw - calc) <= Math.abs(raw * 100 - calc) ? raw : raw * 100;
+}
+
+/* ---------- main ---------- */
+function setStatus(msg, isErr){ const s=$('status'); s.textContent = msg; s.className = 'status' + (isErr ? ' err' : ''); }
+
+async function run(){
+  apiKey = $('apikey').value.trim();
+  const locs = [...new Set($('locs').value.split(/[\s,]+/).map(s => s.trim()).filter(Boolean))];
+  const roots = [...new Set($('roots').value.toUpperCase().split(/[\s,]+/).map(s => s.trim()).filter(Boolean))];
+  const ymd = $('date').value;
+
+  if (!apiKey) return setStatus('Enter your OnDemand API key.', true);
+  if (!locs.length) return setStatus('Enter at least one location ID.', true);
+  if (locs.some(l => !/^\d+$/.test(l))) return setStatus('Location IDs should be numbers only.', true);
+  if (!roots.length) return setStatus('Enter at least one commodity root, such as ZC.', true);
+  if (!ymd) return setStatus('Pick a date.', true);
+  if (ymd > todayYMD()) return setStatus('Pick today or an earlier date.', true);
+
+  storeKey(apiKey); savePrefs();
+  $('go').disabled = true; $('results').innerHTML = '';
+  const notes = [];
+
+  try {
+    // 1. Every cash bid symbol each location has had, per root.
+    const pairs = locs.flatMap(l => roots.map(r => ({l, r})));
+    setStatus(`Finding bid symbols for ${locs.length} location${locs.length>1?'s':''}…`);
+    const instResults = await pool(pairs, CONCURRENCY, p => getInstruments(p.l, p.r),
+      (d, t) => setStatus(`Finding bid symbols… ${d} of ${t}`));
+    const firstErr = instResults.find(r => r && r.error);
+    if (firstErr && instResults.every(r => r && r.error)) throw firstErr.error;
+
+    const locInfo = {};
+    let candidates = [];
+    instResults.forEach((res, i) => {
+      const {l, r} = pairs[i];
+      if (!res || res.error){ notes.push(`Couldn’t load ${r} symbols for location ${l}.`); return; }
+      res.forEach(x => {
+        if (!locInfo[l]) locInfo[l] = {elevator:x.elevator, location:x.location, city:x.city, state:x.state};
+        const start = String(x.deliveryStart||'').slice(0,10), end = String(x.deliveryEnd||'').slice(0,10);
+        // 2. Only bids whose delivery period hadn't ended by the selected date.
+        if (end && end >= ymd) candidates.push({locId:l, root:r, inst:x, start, end});
+      });
+    });
+
+    // 3. Which of those had an end-of-day cash price on the date.
+    setStatus(`Checking ${candidates.length} possible bids…`);
+    const cashCloses = await pool(candidates, CONCURRENCY, c => closeOn(c.inst.symbol, ymd),
+      (d, t) => setStatus(`Checking possible bids… ${d} of ${t}`));
+    const active = candidates.map((c, i) => ({...c, cash: cashCloses[i]}))
+      .filter(c => typeof c.cash === 'number' && !isNaN(c.cash));
+    const histErrors = cashCloses.filter(r => r && r.error).length;
+    if (histErrors) notes.push(`${histErrors} history request${histErrors>1?'s':''} failed; those bids may be missing.`);
+
+    // 4. Basis for each active bid, and settlement for each futures contract.
+    const futSyms = [...new Set(active.map(a => a.inst.underlyingFuture).filter(Boolean))];
+    const extra = [
+      ...active.map(a => ({kind:'basis', a, sym:a.inst.symbol.replace(/^([A-Z]{2})P/, '$1B')})),
+      ...futSyms.map(s => ({kind:'fut', sym:s}))
+    ];
+    setStatus(`Loading basis and futures for ${active.length} bids…`);
+    const extraRes = await pool(extra, CONCURRENCY, e => closeOn(e.sym, ymd),
+      (d, t) => setStatus(`Loading basis and futures… ${d} of ${t}`));
+    const futMap = {};
+    extra.forEach((e, i) => {
+      const v = (extraRes[i] && extraRes[i].error) ? null : extraRes[i];
+      if (e.kind === 'basis') e.a.rawBasis = v; else futMap[e.sym] = futToDollars(v);
+    });
+
+    const rows = active.map(a => {
+      const fut = futMap[a.inst.underlyingFuture] ?? null;
+      return {
+        locId: a.locId,
+        elevator: a.inst.elevator || '',
+        location: [a.inst.location, a.inst.state].filter(Boolean).join(', '),
+        commodity: a.inst.commodity || a.root,
+        delivery: deliveryLabel(a.start, a.end),
+        start: a.start,
+        futMonth: futLabel(a.inst.underlyingFuture),
+        futures: fut,
+        basis: basisToCents(a.rawBasis ?? null, a.cash, fut),
+        cash: a.cash,
+        symbol: a.inst.symbol
+      };
+    });
+    rows.sort((x, y) => locs.indexOf(x.locId) - locs.indexOf(y.locId)
+      || x.commodity.localeCompare(y.commodity) || x.start.localeCompare(y.start));
+
+    locs.forEach(l => {
+      if (!locInfo[l]) notes.push(`Location ${l}: no bid symbols found for ${roots.join(', ')}.`);
+      else if (!rows.some(r => r.locId === l)) notes.push(`Location ${l}: no bids had a closing price on this date.`);
+    });
+
+    lastRows = rows; lastMeta = {ymd, locs, locInfo};
+    render(rows, ymd, locs, locInfo, notes);
+    setStatus(rows.length ? '' : '');
+  } catch (err){
+    setStatus(err.message || String(err), true);
+    if (/Failed to fetch|NetworkError|Load failed/i.test(err.message||'')) setStatus(`Couldn’t reach Barchart (${err.message}). Page origin: ${location.origin || location.protocol}. Open the browser console (F12) for the exact reason.`, true);
+    console.error('Historical cash bids error:', err);
+  } finally {
+    $('go').disabled = false;
+  }
+}
+
+/* ---------- render + export ---------- */
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = (v, d) => v == null ? '—' : v.toFixed(d);
+
+function render(rows, ymd, locs, locInfo, notes){
+  const out = $('results');
+  const locCount = new Set(rows.map(r => r.locId)).size;
+  let html = `<div class="bar"><div class="summary">${rows.length} bid${rows.length===1?'':'s'} on ${esc(prettyDate(ymd))}${rows.length?` across ${locCount} location${locCount===1?'':'s'}`:''}</div>`;
+  if (rows.length) html += `<div class="exports"><button type="button" id="csv">Export CSV</button>${window.XLSX?'<button type="button" id="xlsx">Export Excel</button>':''}</div>`;
+  html += `</div>`;
+  if (notes.length) html += notes.map(n => `<div class="notes">${esc(n)}</div>`).join('');
+
+  if (!rows.length){
+    html += `<div class="tablebox"><div class="empty">No end-of-day bids found for this date. ${isWeekend(ymd)?'That date is a weekend; try the Friday before.':'Try the previous trading day, or check the location IDs.'}</div></div>`;
+    out.innerHTML = html; return;
+  }
+
+  html += `<div class="tablebox"><table><thead><tr>
+    <th>Commodity</th><th>Delivery</th><th>Futures month</th>
+    <th class="num">Futures</th><th class="num">Basis (¢)</th><th class="num">Cash price</th></tr></thead><tbody>`;
+  let cur = null;
+  rows.forEach(r => {
+    if (r.locId !== cur){
+      cur = r.locId;
+      const info = locInfo[r.locId] || {};
+      html += `<tr class="group"><td colspan="6">${esc(info.elevator || 'Location')}<span>${esc([info.location, info.state].filter(Boolean).join(', '))} · ID ${esc(r.locId)}</span></td></tr>`;
+    }
+    html += `<tr title="${esc(r.symbol)}"><td>${esc(r.commodity)}</td><td>${esc(r.delivery)}</td><td>${esc(r.futMonth)}</td>
+      <td class="num">${fmt(r.futures, 4)}</td>
+      <td class="num${r.basis!=null && r.basis<0?' neg':''}">${r.basis==null?'—':(r.basis>0?'+':'')+r.basis.toFixed(2)}</td>
+      <td class="num cash">${fmt(r.cash, 4)}</td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+  out.innerHTML = html;
+  $('csv').onclick = exportCSV;
+  if ($('xlsx')) $('xlsx').onclick = exportXLSX;
+}
+
+function tableData(){
+  const head = ['Date','Location ID','Elevator','Location','Commodity','Delivery','Futures Month','Futures','Basis (cents)','Cash Price','Symbol'];
+  const body = lastRows.map(r => [lastMeta.ymd, Number(r.locId), r.elevator, r.location, r.commodity, r.delivery, r.futMonth,
+    r.futures, r.basis, r.cash, r.symbol]);
+  return [head, ...body];
+}
+function fileBase(){ return `cash-bids_${lastMeta.locs.join('-')}_${lastMeta.ymd}`.slice(0,120); }
+function exportCSV(){
+  const csv = tableData().map(row => row.map(v => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+  }).join(',')).join('\r\n');
+  const blob = new Blob(['\ufeff' + csv], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = fileBase() + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function exportXLSX(){
+  const ws = XLSX.utils.aoa_to_sheet(tableData());
+  ws['!cols'] = [12,11,26,20,18,14,13,10,12,11,26].map(w => ({wch:w}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Bids ' + lastMeta.ymd);
+  XLSX.writeFile(wb, fileBase() + '.xlsx');
+}
+
+/* ---------- init ---------- */
+initKey(); initPrefs();
+$('date').max = todayYMD();
+$('date').value = addDays(todayYMD(), -1);
+$('date').addEventListener('change', e => {
+  $('datehint').textContent = e.target.value && isWeekend(e.target.value) ? 'That’s a weekend; bids won’t have a close.' : 'Trading days only.';
+});
+$('go').onclick = run;
+['locs','date','roots'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') run(); }));
+</script>
+</body>
+</html>
